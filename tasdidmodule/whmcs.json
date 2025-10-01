@@ -1,0 +1,25 @@
+{
+  "schema": "1.0",
+  "type": "whmcs-gateways",
+  "name": "tasdidmodule",
+  "license": "MIT",
+  "category": "payments",
+  "description": {
+    "name": "Tasdid Payment Gateway",
+    "tagline": "A Third Party Payment Gateway Module for WHMCS",
+    "long": "This module integrates the Tasdid payment gateway into WHMCS, allowing customers to make payments using Tasdid.",
+    "features": ["Pay using your QI Wallet"]
+  },
+  "logo": {
+    "filename": "logo.png"
+  },
+  "support": {
+    "docs_url": "https://github.com/alsaadii98/whmcs-tasdid-module"
+  },
+  "authors": [
+    {
+      "name": "alsaadii98",
+      "homepage": "https://github.com/alsaadii98/whmcs-tasdid-module"
+    }
+  ]
+}
