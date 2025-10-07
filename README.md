@@ -10,14 +10,7 @@ The **Tasdid for WHMCS** seamlessly integrates WHMCS, allowing customers to make
 
 ## Installation Guide
 
-1. Navigate to your WHMCS directory.
-2. Move the following files and directories to `modules/gateways`:
-   - `includes/`
-   - `tasdidmodule/`
-   - `tasdidmodule.php`
-3. Move `callback/tasdidmodule.php` to the `callback` directory in WHMCS.
-4. Open the WHMCS Marketplace, search for "Tasdid," and install the module.
-5. Go to WHMCS settings under "Payment Gateways" and enter your Tasdid credentials.
+
 
 ---
 
