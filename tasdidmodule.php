@@ -1,9 +1,15 @@
 <?php
+use Illuminate\Database\Capsule\Manager as Capsule;
+
 if (!defined("WHMCS")) {
     die("This file cannot be accessed directly");
 }
 
-function gatewaymodule_MetaData()
+// Include RabbitMQ helper
+require_once __DIR__ . '/tasdidmodule/rabbitmq_help.php';
+
+
+function tasdidmodule_MetaData()
 {
     return array(
         'DisplayName' => 'Tasdid Payment Gateway Module',
@@ -13,7 +19,8 @@ function gatewaymodule_MetaData()
     );
 }
 
-function gatewaymodule_config()
+
+function tasdidmodule_config()
 {
     return array(
         'FriendlyName' => array(
@@ -61,51 +68,195 @@ function gatewaymodule_config()
             ),
             'Description' => 'Choose one',
         ),
+        'rabbitmq_host' => array(
+            'FriendlyName' => 'RabbitMQ Host',
+            'Type' => 'text',
+            'Size' => '256',
+            'Default' => 'localhost',
+            'Description' => 'RabbitMQ server hostname',
+        ),
+        'rabbitmq_port' => array(
+            'FriendlyName' => 'RabbitMQ Port',
+            'Type' => 'text',
+            'Size' => '10',
+            'Default' => '5672',
+            'Description' => 'RabbitMQ server port',
+        ),
+        'rabbitmq_user' => array(
+            'FriendlyName' => 'RabbitMQ User',
+            'Type' => 'text',
+            'Size' => '256',
+            'Default' => 'whmcs',
+            'Description' => 'RabbitMQ username',
+        ),
+        'rabbitmq_password' => array(
+            'FriendlyName' => 'RabbitMQ Password',
+            'Type' => 'password',
+            'Size' => '256',
+            'Default' => '',
+            'Description' => 'RabbitMQ password',
+        ),
     );
 }
 
-function gatewaymodule_link($params)
+// Handle AJAX request for payment initialization
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $_POST['action'] === 'init_payment') {
+    // Get parameters from the session
+    session_start();
+    $invoiceId = $_SESSION['invoiceId'] ?? null;
+    $systemUrl = $_SESSION['systemUrl'] ?? null;
+    $username = $_SESSION['username'] ?? null;
+    $password = $_SESSION['password'] ?? null;
+    $isProduction = $_SESSION['isProduction'] ?? 'false';
+    $serviceUuid = $_SESSION['serviceUuid'] ?? null;
+    $description = $_SESSION['description'] ?? '';
+    $amount = $_SESSION['amount'] ?? 0;
+    $firstname = $_SESSION['firstname'] ?? '';
+    $lastname = $_SESSION['lastname'] ?? '';
+    $phone = $_SESSION['phone'] ?? '';
+
+    $params = array(
+        'username' => $username,
+        'password' => $password,
+        'isProduction' => $isProduction === 'true' ? true : false,
+        'serviceUuid' => $serviceUuid,
+        'invoiceid' => $invoiceId,
+        'description' => $description,
+        'amount' => $amount,
+        'clientdetails' => array(
+            'firstname' => $firstname,
+            'lastname' => $lastname,
+            'phonenumber' => $phone
+        ),
+        'systemurl' => $systemUrl
+    );
+
+    $response = tasdidmodule_init_payment($params);
+
+    header('Content-Type: application/json');
+    echo json_encode($response);
+    exit;
+}
+
+function tasdidmodule_link($params)
 {
-    // Gateway Configuration Parameters
+    // Start PHP session to store temporary data
+    if (session_status() == PHP_SESSION_NONE) {
+        session_start();
+    }
+
+    $invoiceId = $params['invoiceid'];
+    $systemUrl = $params['systemurl'];
+    $langPayNow = $params['langpaynow'];
     $username = $params['username'];
     $password = $params['password'];
-    $isProduction = $params['isProduction'];
+    $isProduction = $params['isProduction'] ? 'true' : 'false';
     $serviceUuid = $params['serviceUuid'];
-    $currency = $params['currency'];
+    $description = $params['description'] ?? '';
+    $amount = $params['amount'] ?? 0;
+    $firstname = $params['clientdetails']['firstname'] ?? '';
+    $lastname = $params['clientdetails']['lastname'] ?? '';
+    $phone = $params['clientdetails']['phonenumber'] ?? '';
 
 
-    // Invoice Parameters
-    $invoiceId = $params['invoiceid'];
-    $description = $params["description"];
-    $amount = $params['amount'];
-    $currencyCode = $params['currency'];
-
-    // Client Parameters
-    $firstname = $params['clientdetails']['firstname'];
-    $lastname = $params['clientdetails']['lastname'];
-    $phone = $params['clientdetails']['phonenumber'];
-
-
-
-    // System Parameters
-    $companyName = $params['companyname'];
-    $systemUrl = $params['systemurl'];
-    $returnUrl = $params['returnurl'];
-    $langPayNow = $params['langpaynow'];
-    $moduleDisplayName = $params['name'];
-    $moduleName = $params['paymentmethod'];
-    $whmcsVersion = $params['whmcsVersion'];
+    // Store necessary data in session for AJAX request
+    $_SESSION['invoiceId'] = $invoiceId;
+    $_SESSION['systemUrl'] = $systemUrl;
+    $_SESSION['username'] = $username;
+    $_SESSION['password'] = $password;
+    $_SESSION['isProduction'] = $isProduction;
+    $_SESSION['serviceUuid'] = $serviceUuid;
+    $_SESSION['description'] = $description;
+    $_SESSION['amount'] = $amount;
+    $_SESSION['firstname'] = $firstname;
+    $_SESSION['lastname'] = $lastname;
+    $_SESSION['phone'] = $phone;
 
 
+    $htmlOutput = "
+    <script  src=\"https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js\"></script>
+    <script src=\"modules/gateways/tasdidmodule/tasdid_payment.js?version=1.0.0\"></script>
+    
+    <div x-data=\"tasdidPayment()\" class=\"tasdid-payment-container\">
+        <button type=\"button\" class=\"btn btn-success btn-lg\" 
+                :disabled=\"loading || paymentUrl\" 
+                @click=\"initPayment()\">
+            <span x-show=\"!loading && !paymentUrl\">$langPayNow</span>
+            <span x-show=\"loading\">Processing...</span>
+            <span x-show=\"paymentUrl\">Payment Ready</span>
+        </button>
 
-    $htmlOutput = '<form method="post" action="' . $url . '">';
-    foreach ($postfields as $k => $v) {
-        $htmlOutput .= '<input type="hidden" name="' . $k . '" value="' . urlencode($v) . '" />';
-    }
-    $htmlOutput .= '<input type="submit" value="' . $langPayNow . '" />';
-    $htmlOutput .= '</form>';
+        <button type=\"button\" class=\"btn btn-primary btn-lg\" 
+                x-show=\"paymentUrl\" 
+                @click=\"goToPayment()\">
+            Go to Payment
+        </button>
+    </div>";
+
 
     return $htmlOutput;
+}
+
+function tasdidmodule_init_payment($params)
+{
+    try {
+        // Gateway Configuration Parameters
+        $username = $params['username'];
+        $password = $params['password'];
+        $isProduction = $params['isProduction'];
+        $serviceUuid = $params['serviceUuid'];
+
+        // Invoice Parameters
+        $invoiceId = $params['invoiceid'];
+        $description = $params["description"];
+        $amount = $params['amount'];
+
+        // Client Parameters
+        $firstname = $params['clientdetails']['firstname'];
+        $lastname = $params['clientdetails']['lastname'];
+        $phone = $params['clientdetails']['phonenumber'];
+
+        // System Parameters
+        $systemUrl = $params['systemurl'];
+
+        // Get authentication token
+        $token = tasdid_login($username, $password, $isProduction);
+
+        // Create invoice in Tasdid
+        $payId = tasdid_create_invoice(
+            $token,
+            $serviceUuid,
+            $amount,
+            $description,
+            $firstname,
+            $lastname,
+            $phone,
+            $invoiceId,
+            $systemUrl,
+            $isProduction
+        );
+
+        // // Store payId in invoice notes
+        $pdo = Capsule::connection()->getPdo();
+        $stmt = $pdo->prepare("UPDATE tblinvoices SET notes = ? WHERE id = ?");
+        $stmt->execute([$payId, $invoiceId]);
+
+        // Generate payment URL
+        $paymentUrl = tasdid_get_payment_url($payId, $isProduction);
+
+        return [
+            'success' => true,
+            'payId' => $payId,
+            'paymentUrl' => $paymentUrl
+        ];
+
+    } catch (Exception $e) {
+        logModuleCall('tasdidmodule', 'ajax_payment_init_error', $params, $e->getMessage(), [], []);
+        return [
+            'success' => false,
+            'error' => $e->getMessage()
+        ];
+    }
 }
 
 
@@ -140,6 +291,7 @@ function tasdid_login($username, $password, $isProduction)
     // Handle the response
     if ($httpCode == 200) {
         $responseData = json_decode($response, true);
+
         if (isset($responseData['data']['token'])) {
             return $responseData['data']['token'];
         } else {
@@ -160,15 +312,18 @@ function tasdid_create_invoice($token, $serviceId, $amount, $description, $first
     ///v2/api/Bill/AddBill
 
     // Prepare the invoice payload
+
+
     $invoicePayload = json_encode(array(
         "amount" => $amount,
         "payId" => "",
         "customerName" => $firstname . " " . $lastname,
         "dueDate" => date('Y-m-d', strtotime('+7 days')),
-        "phoneNumber" => reformatPhoneNumberFromInternationalToLocal($phone),
+        "phoneNumber" => addZeroToPhoneNumber($phone),
         "serviceId" => $serviceId,
         "note" => $invoiceId . " - " . $description
     ));
+
 
 
     // Url
@@ -184,12 +339,12 @@ function tasdid_create_invoice($token, $serviceId, $amount, $description, $first
     ));
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, $invoicePayload);
-    
+
     // Execute the request
     $response = curl_exec($ch);
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
-    
+
     // Handle the response
     if ($httpCode == 200) {
         $responseData = json_decode($response, true);
@@ -213,10 +368,16 @@ function tasdid_get_target_url($isProduction)
     }
 }
 
-function reformatPhoneNumberFromInternationalToLocal($phoneNumber)
+function tasdid_get_payment_url($payId, $isProduction)
 {
-    if (substr($phoneNumber, 0, 4) === '+964') {
-        return '0' . substr($phoneNumber, 4);
+    $baseUrl = $isProduction ? "https://pay.tasdid.net" : "https:///pay-uat.tasdid.net";
+    return $baseUrl . "?id=" . $payId;
+}
+
+function addZeroToPhoneNumber($phoneNumber)
+{
+    if (substr($phoneNumber, 0, 1) !== '0') {
+        return '0' . $phoneNumber;
     }
     return $phoneNumber;
 }
